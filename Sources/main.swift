@@ -422,9 +422,15 @@ class TabBarPanel: NSPanel {
             rebuildTabs()
         }
         
-        let screenH = NSScreen.main?.frame.height ?? 900
+        // Find which screen the window is on
+        // NSScreen frames use NS coords (origin bottom-left of primary screen)
+        // AX frames use CG coords (origin top-left of primary screen)
+        // Primary screen height is the pivot for conversion
+        let primaryH = NSScreen.screens.first?.frame.height ?? 900
+        
+        // Convert CG top-left Y to NS bottom-left Y for the window's top edge
         let barX = kiroFrame.origin.x
-        let barY = screenH - kiroFrame.origin.y
+        let barY = primaryH - kiroFrame.origin.y  // NS Y of window top edge = bar bottom
         let barW = kiroFrame.width
         
         setFrame(CGRect(x: barX, y: barY, width: barW, height: barHeight), display: false, animate: false)
