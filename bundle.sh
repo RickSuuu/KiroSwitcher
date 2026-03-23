@@ -13,6 +13,11 @@ mkdir -p "${MACOS}" "${RESOURCES}"
 # Copy binary
 cp ".build/release/${APP_NAME}" "${MACOS}/${APP_NAME}"
 
+# Copy icon
+if [ -f "AppIcon.icns" ]; then
+    cp "AppIcon.icns" "${RESOURCES}/AppIcon.icns"
+fi
+
 # Create Info.plist
 cat > "${CONTENTS}/Info.plist" << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -35,8 +40,10 @@ cat > "${CONTENTS}/Info.plist" << 'EOF'
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>LSUIElement</key>
-    <true/>
+    <false/>
     <key>NSAccessibilityUsageDescription</key>
     <string>KiroSwitcher needs accessibility access to manage Kiro windows.</string>
 </dict>

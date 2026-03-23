@@ -422,17 +422,23 @@ class TabBarPanel: NSPanel {
             rebuildTabs()
         }
         
-        // Find which screen the window is on
-        // NSScreen frames use NS coords (origin bottom-left of primary screen)
-        // AX frames use CG coords (origin top-left of primary screen)
-        // Primary screen height is the pivot for conversion
+        // Convert CG coords (top-left origin) to NS coords (bottom-left origin)
         let primaryH = NSScreen.screens.first?.frame.height ?? 900
         
-        // Convert CG top-left Y to NS bottom-left Y for the window's top edge
         let barX = kiroFrame.origin.x
         let barY = primaryH - kiroFrame.origin.y  // NS Y of window top edge = bar bottom
         let barW = kiroFrame.width
         
+        // Check if there's enough space above the window for the tab bar
+        let menuBarMaxY = NSScreen.main?.visibleFrame.maxY ?? (primaryH - 25)
+        
+        if barY + barHeight > menuBarMaxY {
+            // Not enough space above — hide the bar instead of overlapping
+            if isVisible { orderOut(nil) }
+            return
+        }
+        
+        if !isVisible { orderFront(nil) }
         setFrame(CGRect(x: barX, y: barY, width: barW, height: barHeight), display: false, animate: false)
     }
 }
@@ -483,7 +489,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 let app = NSApplication.shared
-app.setActivationPolicy(.accessory)
+app.setActivationPolicy(.regular)
 let delegate = AppDelegate()
 app.delegate = delegate
 app.run()
