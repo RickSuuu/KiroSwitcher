@@ -167,6 +167,70 @@ class MultiWindowManager {
         return (info, CGRect(origin: pt, size: sz))
     }
     
+    /// Tile all windows evenly across the screen
+    func tileAllWindows() {
+        let windows = getAllWindows()
+        guard !windows.isEmpty else { return }
+        
+        // Use the screen where the mouse cursor is (or main screen)
+        let mouseLocation = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first(where: { NSMouseInRect(mouseLocation, $0.frame, false) }) ?? NSScreen.main ?? NSScreen.screens[0]
+        let visibleFrame = screen.visibleFrame
+        
+        // Convert NS coords (bottom-left origin) to CG coords (top-left origin)
+        let primaryH = NSScreen.screens.first?.frame.height ?? screen.frame.height
+        
+        let count = windows.count
+        let (cols, rows) = bestGrid(for: count)
+        
+        let cellW = visibleFrame.width / CGFloat(cols)
+        let cellH = visibleFrame.height / CGFloat(rows)
+        
+        for (i, win) in windows.enumerated() {
+            let col = i % cols
+            let row = i / cols
+            
+            // NS coordinates for the cell
+            let nsX = visibleFrame.origin.x + CGFloat(col) * cellW
+            let nsY = visibleFrame.origin.y + visibleFrame.height - CGFloat(row + 1) * cellH
+            
+            // Convert to CG coordinates (top-left origin)
+            let cgX = nsX
+            let cgY = primaryH - nsY - cellH
+            
+            var position = CGPoint(x: cgX, y: cgY)
+            var size = CGSize(width: cellW, height: cellH)
+            
+            if let posVal = AXValueCreate(.cgPoint, &position),
+               let sizeVal = AXValueCreate(.cgSize, &size) {
+                AXUIElementSetAttributeValue(win.ax, kAXPositionAttribute as CFString, posVal)
+                AXUIElementSetAttributeValue(win.ax, kAXSizeAttribute as CFString, sizeVal)
+            }
+        }
+        
+        // Raise all windows so they're visible
+        for win in windows {
+            AXUIElementPerformAction(win.ax, kAXRaiseAction as CFString)
+        }
+    }
+    
+    /// Calculate the best grid layout (cols x rows) for N windows
+    private func bestGrid(for count: Int) -> (cols: Int, rows: Int) {
+        switch count {
+        case 1: return (1, 1)
+        case 2: return (2, 1)
+        case 3: return (3, 1)  // 3 columns side by side for code editors
+        case 4: return (2, 2)
+        case 5, 6: return (3, 2)
+        case 7, 8: return (4, 2)
+        case 9: return (3, 3)
+        default:
+            let cols = Int(ceil(sqrt(Double(count))))
+            let rows = Int(ceil(Double(count) / Double(cols)))
+            return (cols, rows)
+        }
+    }
+    
     /// Activate a specific window
     func activate(windowInfo: WindowInfo) {
         // Get fresh AX reference
@@ -382,6 +446,42 @@ class TabBarPanel: NSPanel {
             
             tabStack.addArrangedSubview(container)
         }
+        
+        // Add tile button at the end (only when there are 2+ windows)
+        if windowInfos.count >= 2 {
+            let tileBtn = NSButton(frame: .zero)
+            tileBtn.title = "⊞"
+            tileBtn.toolTip = "平铺所有窗口"
+            tileBtn.font = .systemFont(ofSize: 16)
+            tileBtn.isBordered = false
+            tileBtn.target = self
+            tileBtn.action = #selector(tileClicked)
+            tileBtn.translatesAutoresizingMaskIntoConstraints = false
+            
+            let tileContainer = NSView()
+            tileContainer.wantsLayer = true
+            tileContainer.translatesAutoresizingMaskIntoConstraints = false
+            
+            // Separator before tile button
+            let sep = NSView()
+            sep.wantsLayer = true
+            sep.layer?.backgroundColor = NSColor(white: 0.35, alpha: 0.3).cgColor
+            sep.translatesAutoresizingMaskIntoConstraints = false
+            tileContainer.addSubview(sep)
+            tileContainer.addSubview(tileBtn)
+            
+            NSLayoutConstraint.activate([
+                tileContainer.widthAnchor.constraint(equalToConstant: 40),
+                sep.leadingAnchor.constraint(equalTo: tileContainer.leadingAnchor),
+                sep.topAnchor.constraint(equalTo: tileContainer.topAnchor, constant: 8),
+                sep.bottomAnchor.constraint(equalTo: tileContainer.bottomAnchor, constant: -8),
+                sep.widthAnchor.constraint(equalToConstant: 1),
+                tileBtn.centerXAnchor.constraint(equalTo: tileContainer.centerXAnchor, constant: 2),
+                tileBtn.centerYAnchor.constraint(equalTo: tileContainer.centerYAnchor),
+            ])
+            
+            tabStack.addArrangedSubview(tileContainer)
+        }
     }
     
     @objc private func tabClicked(_ sender: NSButton) {
@@ -391,6 +491,12 @@ class TabBarPanel: NSPanel {
         activeKey = info.uniqueKey
         rebuildTabs()
         manager.activate(windowInfo: info)
+    }
+    
+    @objc private func tileClicked() {
+        manager.tileAllWindows()
+        // Reset frame tracking so the bar repositions after tiling
+        lastKiroFrame = .zero
     }
     
     // MARK: - Follow Active Window
@@ -426,16 +532,23 @@ class TabBarPanel: NSPanel {
         let primaryH = NSScreen.screens.first?.frame.height ?? 900
         
         let barX = kiroFrame.origin.x
-        let barY = primaryH - kiroFrame.origin.y  // NS Y of window top edge = bar bottom
         let barW = kiroFrame.width
+        
+        // NS Y of the window's top edge
+        let windowTopNSY = primaryH - kiroFrame.origin.y
+        // NS Y of the window's bottom edge
+        let windowBottomNSY = primaryH - (kiroFrame.origin.y + kiroFrame.height)
         
         // Check if there's enough space above the window for the tab bar
         let menuBarMaxY = NSScreen.main?.visibleFrame.maxY ?? (primaryH - 25)
         
-        if barY + barHeight > menuBarMaxY {
-            // Not enough space above — hide the bar instead of overlapping
-            if isVisible { orderOut(nil) }
-            return
+        let barY: CGFloat
+        if windowTopNSY + barHeight > menuBarMaxY {
+            // Not enough space above (fullscreen or near top) — place bar at the bottom of the window
+            barY = windowBottomNSY
+        } else {
+            // Normal case — place bar above the window
+            barY = windowTopNSY
         }
         
         if !isVisible { orderFront(nil) }
@@ -472,6 +585,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if !foundIcon { btn.title = "DS" }
         }
         let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "⊞ 平铺所有窗口", action: #selector(tileWindows), keyEquivalent: "t"))
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "显示/隐藏", action: #selector(toggle), keyEquivalent: "k"))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "退出", action: #selector(quit), keyEquivalent: "q"))
@@ -481,6 +596,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel?.orderFront(nil)
     }
     
+    @objc func tileWindows() {
+        let mgr = panel?.manager ?? MultiWindowManager()
+        mgr.tileAllWindows()
+        panel?.reloadWindows()
+    }
     @objc func toggle() {
         if panel?.isVisible == true { panel?.orderOut(nil) }
         else { panel?.orderFront(nil) }
